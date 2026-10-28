@@ -1,5 +1,11 @@
 # Turning on the shared wall (Supabase)
 
+**Status: this deployment is already connected.** Project ref
+`lqpoqwdmfhanlhztwcvj`, the schema is applied, the wall is live at
+<https://resuramor-oss.github.io/adwall/>, and 12 starter ads are loaded. The rest
+of this file documents how it was set up, how to moderate it, and how to recreate
+it from scratch if the project is ever deleted.
+
 Out of the box the site runs in **demo mode**: ads are saved in the visitor's own
 browser, so nobody else sees them. Connecting Supabase makes the wall real — every
 visitor reads the same list, and photos go to cloud storage.

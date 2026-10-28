@@ -48,7 +48,8 @@ The site decides which mode it is in from `assets/config.js`:
 | "Yours" badge and delete | Per browser | Per browser, enforced by a device token in the database |
 | Offline / no connection | Works | Shows a "could not reach the wall" banner with Retry |
 
-The footer tells you which mode is live, so there is no guessing.
+The footer tells you which mode is live, so there is no guessing. This deployment
+currently runs in **shared mode**; the seed ads live in the database.
 
 ## Editing the demo ads
 
