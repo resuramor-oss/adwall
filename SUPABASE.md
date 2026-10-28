@@ -1,16 +1,14 @@
 # Turning on the shared wall (Supabase)
 
 **Status: this deployment is already connected.** Project ref
-`lqpoqwdmfhanlhztwcvj`, the schema is applied, the wall is live at
-<https://resuramor-oss.github.io/adwall/>, and 12 starter ads are loaded. The rest
-of this file documents how it was set up, how to moderate it, and how to recreate
-it from scratch if the project is ever deleted.
+`lqpoqwdmfhanlhztwcvj`, the schema is applied, and the wall is live at
+<https://resuramor-oss.github.io/adwall/>. The rest of this file documents how it
+was set up, how to moderate it, and how to recreate it from scratch if the project
+is ever deleted.
 
-Out of the box the site runs in **demo mode**: ads are saved in the visitor's own
-browser, so nobody else sees them. Connecting Supabase makes the wall real — every
-visitor reads the same list, and photos go to cloud storage.
-
-It takes about five minutes, and it stays inside the free tier.
+The site reads and writes only through Supabase. There is no offline or demo mode:
+without credentials it shows a setup notice instead of the wall, so a broken
+deployment is obvious rather than silently local.
 
 ---
 
@@ -29,9 +27,6 @@ It takes about five minutes, and it stays inside the free tier.
 2. Paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and press **Run**.
 3. You should see "Success. No rows returned". If you see an error, paste it back
    into the chat — do not run only part of the file, the pieces depend on each other.
-
-Then, optionally, run [`supabase/seed.sql`](supabase/seed.sql) the same way to
-pre-fill the wall with the 12 demo ads.
 
 What the schema builds:
 
@@ -84,22 +79,8 @@ Everything is done in the dashboard, no code:
   the site immediately (the view filters it) but stays in the database.
 - **Delete an ad:** same screen → delete the row. The photo stays in Storage;
   remove it under Storage → `ad-photos` if you care about the space.
-- **Clear the starter ads:** if the wall only contains the 12 samples, run
-  `delete from public.ads;`. To keep real posts, target the samples by seller:
-
-  ```sql
-  delete from public.ads
-  where seller in (
-    'Mia''s Bakes', 'Kuya J''s Prints', 'Thrift Finds', 'Notes & Niche',
-    'Sari-Sari Corner', 'Bead & Bloom', 'Lens by Ren', 'Study Hub',
-    'Milk Tea Club', 'Inkwell Stickers', 'The Plant Shelf', 'Pixel Prints'
-  );
-  ```
-
-  Rows created by `supabase/seed.sql` instead use the token
-  `00000000-0000-4000-8000-000000000000`, so
-  `delete from public.ads where owner_token = '00000000-0000-4000-8000-000000000000';`
-  also works for those.
+- **Revive an empty wall:** there is no seed data in the repo. Post a few ads from
+  the site itself, or run `insert` statements in the SQL Editor.
 - **Lift the per-device rate limit:** edit the `recent >= 5` line in `create_ad`.
 
 ## What the free tier means here
@@ -134,7 +115,7 @@ For a class project, yes — with these honest caveats:
 
 | Symptom | Cause and fix |
 |---|---|
-| Footer still says "Demo mode" | `config.js` was not saved, or the browser cached the old file. Hard-reload (Ctrl+Shift+R) |
+| Footer says nothing / "not connected" notice | `config.js` has empty or truncated values, or the browser cached the old file. Hard-reload (Ctrl+Shift+R) |
 | "Could not reach the wall: Failed to fetch" | Wrong `supabaseUrl`, project paused, or no internet |
 | `401` / "Invalid API key" | You pasted the wrong key, or a truncated one |
 | `permission denied for table ads` | You are calling the table instead of the view/functions — re-run `schema.sql` |
@@ -142,4 +123,5 @@ For a class project, yes — with these honest caveats:
 | Photo upload fails | Bucket `ad-photos` missing, file over 2 MB, or the schema was run before the bucket insert |
 | Ads appear but everyone's says "Yours" | Only possible if `adwall.myids.v1` was copied between browsers — clear site data |
 
-To go back to demo mode, empty the two strings in `config.js` and redeploy.
+If the project is ever deleted, create a new one, run `schema.sql`, and paste the
+new URL and key into `assets/config.js`. The site code does not change.

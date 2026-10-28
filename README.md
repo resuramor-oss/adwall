@@ -3,9 +3,9 @@
 The public site: a free advertising wall where student sellers and small local
 businesses post ads and buyers browse them in one place.
 
-Plain HTML, CSS, and JavaScript. **No build step, no dependencies.** The data layer
-is either the visitor's browser (demo mode) or Supabase (shared wall) — see
-[`SUPABASE.md`](SUPABASE.md).
+Plain HTML, CSS, and JavaScript with **no build step and no dependencies**. Ads live
+in Supabase (Postgres + Storage), so every visitor sees the same wall. Setup and
+moderation: [`SUPABASE.md`](SUPABASE.md).
 
 ```
 site/
@@ -13,14 +13,12 @@ site/
 ├── 404.html                # fallback page (used by GitHub Pages / Netlify)
 ├── assets/
 │   ├── styles.css          # all styling
-│   ├── app.js              # filtering, dialogs, posting, data layer
-│   ├── config.js           # Supabase URL + anon key (empty = demo mode)
-│   ├── ads.js              # demo ads used when Supabase is not configured
+│   ├── app.js              # filtering, dialogs, posting, Supabase calls
+│   ├── config.js           # project URL + anon key
 │   └── favicon.svg
 ├── supabase/
-│   ├── schema.sql          # tables, view, functions, storage bucket
-│   └── seed.sql            # optional starter ads
-├── SUPABASE.md             # 5-minute setup for the shared wall
+│   └── schema.sql          # tables, view, functions, storage bucket
+├── SUPABASE.md             # setup, moderation, troubleshooting
 └── README.md
 ```
 
@@ -31,43 +29,35 @@ cd site
 python3 -m http.server 8000
 ```
 
-Then open <http://localhost:8000>.
+Then open <http://localhost:8000>. It talks to the real database, so anything you
+post locally is live for everyone — use the "Delete my ad" button when you're done
+testing.
 
-Opening `index.html` directly with `file://` mostly works too, but serving it is
-closer to how it behaves online.
+If `assets/config.js` is empty the page shows a setup notice instead of the wall.
 
-## Two modes
+## How the data works
 
-The site decides which mode it is in from `assets/config.js`:
+| Action | Where it goes |
+|---|---|
+| Read the wall | `GET /rest/v1/ads_public` — a view that hides owner tokens and `hidden` rows |
+| Post an ad | `rpc/create_ad` — validates input, caps a device at 5 posts per 10 minutes |
+| Delete your ad | `rpc/delete_ad` — only succeeds with the token that created it |
+| Photo | Uploaded to the public `ad-photos` bucket (2 MB cap), compressed in the browser to ~100 KB first |
 
-| | Demo mode (no keys) | Shared mode (keys filled in) |
-|---|---|---|
-| Ads seen by visitors | The 12 in `assets/ads.js` + their own posts | Everything in the database |
-| Where a new ad goes | `localStorage` on that device | Postgres, visible to everyone |
-| Photos | Compressed and stored as data URLs locally | Uploaded to the `ad-photos` bucket |
-| "Yours" badge and delete | Per browser | Per browser, enforced by a device token in the database |
-| Offline / no connection | Works | Shows a "could not reach the wall" banner with Retry |
-
-The footer tells you which mode is live, so there is no guessing. This deployment
-currently runs in **shared mode**; the seed ads live in the database.
-
-## Editing the demo ads
-
-`assets/ads.js` only matters in demo mode. Copy a block, change the fields, done.
-`ageHours` only controls the "posted X ago" label. In shared mode the equivalent
-job is done by `supabase/seed.sql`.
+"Yours" badges and saved ads are remembered in `localStorage` on that device; the
+ads themselves are always on the server.
 
 ## Features
 
-| Feature | Status |
+| Feature | Notes |
 |---|---|
-| Browse, search, filter by category, sort by price/date | Works |
-| Post an ad with photo, price, description, contact | Works |
-| Save ads, share links, deep link `?ad=<id>` | Works |
-| Ads visible to other people/devices | With Supabase configured |
-| Delete your own ad | Works; server-side check stops others |
+| Browse, search, filter by category, sort by price/date | Client-side over the latest 200 ads |
+| Post an ad with photo, price, description, contact | Works from any device; appears for everyone |
+| Save ads, share links, deep link `?ad=<id>` | Link opens the ad detail dialog directly |
+| Delete your own ad | Server-side check stops others |
 | Rate limiting | 5 posts per device per 10 minutes |
 | Automatic refresh | On tab focus, and once a minute |
+| Offline / paused project | Banner explains it, with a Retry button |
 
 ## Deploying for free
 
@@ -75,7 +65,7 @@ Live at <https://resuramor-oss.github.io/adwall/> — this folder is its own git
 After editing:
 
 ```bash
-git add . && git commit -m "update ads" && git push
+git add . && git commit -m "update" && git push
 ```
 
-Full comparison of free hosts and step-by-step alternatives: [`../HOSTING.md`](../HOSTING.md).
+Full comparison of free hosts: [`../HOSTING.md`](../HOSTING.md).

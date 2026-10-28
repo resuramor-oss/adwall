@@ -1,13 +1,9 @@
 /* AdWall — front-end logic
  *
- * Two modes, chosen automatically from assets/config.js:
- *
- *   shared  Supabase is configured. Ads live in Postgres, photos in Storage, and
- *           everyone sees the same wall. Reads go through the ads_public view;
- *           writes go through the create_ad / delete_ad functions.
- *
- *   local   No credentials. Ads are stored in this browser only, seeded with the
- *           demo list in assets/ads.js. Handy for showing the wall offline.
+ * Ads live in Supabase: Postgres for the data, Storage for photos, so every
+ * visitor sees the same wall. Reads go through the ads_public view; writes go
+ * through the create_ad / delete_ad functions. The anon key in assets/config.js
+ * is public by design — row-level security in supabase/schema.sql protects it.
  */
 
 (() => {
@@ -22,10 +18,9 @@
   const KEY = String(CFG.supabaseKey || "").trim();
   const TABLE = CFG.table || "ads_public";
   const BUCKET = CFG.storageBucket || "ad-photos";
-  const SHARED = /^https?:\/\//i.test(BASE) && KEY.length > 20;
+  const CONFIGURED = /^https?:\/\//i.test(BASE) && KEY.length > 20;
 
   const LS = {
-    posts: "adwall.posts.v1",
     saved: "adwall.saved.v1",
     owner: "adwall.owner.v1",
     mine: "adwall.myids.v1"
@@ -67,8 +62,7 @@
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch {
-      if (SHARED) return; // not fatal: the wall itself is on the server
-      toast("This browser is blocking storage, so your post won't be saved.");
+      /* saved ads and "yours" markers are conveniences; failing to store them is not fatal */
     }
   }
 
@@ -116,17 +110,6 @@
     Services: { emoji: "🛠️", gradient: "linear-gradient(150deg,#dbe7f5,#b9cfe8)" }
   };
 
-  function localAds() {
-    const now = Date.now();
-    const seeds = (window.SEED_ADS || []).map((ad) => ({
-      ...ad,
-      createdAt: now - (ad.ageHours || 0) * 36e5,
-      mine: false
-    }));
-    const mine = readJSON(LS.posts, []);
-    return (Array.isArray(mine) ? mine.map((ad) => ({ ...ad, mine: true })) : []).concat(seeds);
-  }
-
   function fromRow(row) {
     return {
       id: row.id,
@@ -146,24 +129,13 @@
   }
 
   async function listAds() {
-    if (!SHARED) return localAds();
     const rows = await api(`/rest/v1/${TABLE}?select=*&order=created_at.desc&limit=200`);
     return (Array.isArray(rows) ? rows : []).map(fromRow);
   }
 
   async function createAd(input, photoBlob) {
-    if (!SHARED) {
-      const ad = {
-        ...input,
-        id: `post-${Date.now()}`,
-        photo: photoBlob ? await blobToDataUrl(photoBlob) : input.photo || "",
-        createdAt: Date.now(),
-        mine: true
-      };
-      const posts = readJSON(LS.posts, []);
-      posts.unshift(ad);
-      writeJSON(LS.posts, Array.isArray(posts) ? posts : [ad]);
-      return { ad, warning: null };
+    if (!CONFIGURED) {
+      throw new Error("This copy of AdWall is not connected to a database. Add the Supabase URL and anon key to assets/config.js.");
     }
 
     let photoUrl = input.photo || "";
@@ -201,11 +173,6 @@
   }
 
   async function deleteAd(id) {
-    if (!SHARED) {
-      const posts = readJSON(LS.posts, []);
-      writeJSON(LS.posts, posts.filter((post) => post.id !== id));
-      return;
-    }
     const ok = await api("/rest/v1/rpc/delete_ad", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -481,6 +448,16 @@
   }
 
   async function refresh({ silent = false } = {}) {
+    if (!CONFIGURED) {
+      state.loading = false;
+      state.error = new Error("not configured");
+      setNotice(
+        "This copy of AdWall is not connected to a database. Add the Supabase URL and anon key to assets/config.js — see site/SUPABASE.md.",
+        "error"
+      );
+      render();
+      return;
+    }
     if (!silent) {
       state.loading = true;
       setNotice("");
@@ -493,13 +470,7 @@
       setNotice("");
     } catch (error) {
       state.error = error;
-      setNotice(
-        SHARED
-          ? `Could not reach the wall: ${error.message}`
-          : "Could not load the demo ads.",
-        "error",
-        true
-      );
+      setNotice(`Could not reach the wall: ${error.message}`, "error", true);
       if (!state.ads.length) state.ads = [];
     } finally {
       state.loading = false;
@@ -527,7 +498,7 @@
 
     const pills = el("div", { class: "ad-meta" }, [
       el("span", { class: "pill", text: ad.category }),
-      el("span", { class: "pill pill-teal", text: SHARED ? "Live on the wall" : "Free to post" }),
+      el("span", { class: "pill pill-teal", text: "Live on the wall" }),
       ad.mine ? el("span", { class: "pill", text: "Your ad" }) : null
     ]);
 
@@ -601,11 +572,9 @@
       el("div", { class: "ad-actions" }, actions),
       el("p", {
         class: "ad-note",
-        text: SHARED
-          ? (ad.mine
-            ? "You can delete this ad from this browser. Anyone with the link can see it."
-            : "AdWall does not handle payments or delivery. Meet in a public place on campus.")
-          : "Demo mode: this ad is stored in this browser only. Add Supabase keys to share it."
+        text: ad.mine
+          ? "You can delete this ad from this browser. Anyone with the link can see it."
+          : "AdWall does not handle payments or delivery. Meet in a public place on campus."
       })
     );
 
@@ -660,15 +629,6 @@
         "image/jpeg",
         0.82
       );
-    });
-  }
-
-  function blobToDataUrl(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(new Error("Could not read that photo."));
-      reader.readAsDataURL(blob);
     });
   }
 
@@ -742,10 +702,10 @@
 
       state.ads = [ad].concat(state.ads.filter((other) => other.id !== ad.id));
       render();
-      toast(warning || (SHARED ? "Your ad is live on the wall" : "Your ad is on the wall"));
+      toast(warning || "Your ad is live on the wall");
       openAd(ad.id);
 
-      if (SHARED) refresh({ silent: true });
+      refresh({ silent: true });
     } catch (error) {
       showError(error.message || "Something went wrong. Please try again.");
     } finally {
@@ -806,25 +766,22 @@
 
   /* Keep the wall fresh without websockets: refresh when the tab regains focus,
      and at most once a minute while it stays open. */
-  if (SHARED) {
-    const maybeRefresh = () => {
-      if (document.visibilityState === "visible" && Date.now() - lastFetch > 30000) {
-        refresh({ silent: true });
-      }
-    };
-    window.addEventListener("focus", maybeRefresh);
-    document.addEventListener("visibilitychange", maybeRefresh);
-    setInterval(() => {
-      if (document.visibilityState === "visible") refresh({ silent: true });
-    }, 60000);
-  }
+  const maybeRefresh = () => {
+    if (document.visibilityState === "visible" && Date.now() - lastFetch > 30000) {
+      refresh({ silent: true });
+    }
+  };
+  window.addEventListener("focus", maybeRefresh);
+  document.addEventListener("visibilitychange", maybeRefresh);
+  setInterval(() => {
+    if (document.visibilityState === "visible") refresh({ silent: true });
+  }, 60000);
 
   /* -------------------------------------------------------------------- boot */
 
   if (storageNote) {
-    storageNote.textContent = SHARED
-      ? "Shared wall: ads you post are live for everyone, with no accounts, no tracking, and no fees."
-      : "Demo mode: ads you post are saved in this browser only. Add Supabase keys (site/SUPABASE.md) to share them.";
+    storageNote.textContent =
+      "Ads you post are live for everyone — no accounts, no tracking, and no fees.";
   }
 
   render();

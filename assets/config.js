@@ -1,12 +1,13 @@
 /* AdWall — connection settings
  *
- * Leave these empty to run the site in local demo mode (ads saved in the browser).
- * Fill both in to make the wall shared through Supabase. The anon key is meant to
- * be public: it is protected by the row-level security rules in supabase/schema.sql.
+ * Both values are required. Without them the site shows a setup message instead
+ * of the wall. They are not secret: the anon/publishable key is protected by the
+ * row-level security rules in supabase/schema.sql, so it is safe in a public repo.
  *
  * Where to find them: Supabase dashboard → Project Settings → API
  *    supabaseUrl  = "https://<project-ref>.supabase.co"
- *    supabaseKey  = the "anon / public" key (NOT the service_role key)
+ *    supabaseKey  = the "anon" / "public" / "sb_publishable_..." key
+ *                   (NOT the secret / service_role key)
  */
 window.ADWALL_CONFIG = {
   supabaseUrl: "https://lqpoqwdmfhanlhztwcvj.supabase.co",
