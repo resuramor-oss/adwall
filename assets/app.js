@@ -462,6 +462,14 @@
     grid.replaceChildren(...ads.map(card));
     empty.hidden = ads.length > 0 || Boolean(state.error);
 
+    // A wall with nothing on it should not read like a failed search.
+    const wallEmpty = state.ads.length === 0;
+    $("#empty-art").textContent = wallEmpty ? "🧱" : "🔍";
+    $("#empty-title").textContent = wallEmpty ? "The wall is empty" : "No ads match that";
+    $("#empty-text").textContent = wallEmpty
+      ? "Be the first to post — it takes about a minute and it is free."
+      : "Try a different category or search word — or be the first to post about it.";
+
     const scope = state.cat === "all" ? "" : ` in ${state.cat.toLowerCase()}`;
     countEl.innerHTML = ads.length
       ? `<strong>${ads.length}</strong> ad${ads.length === 1 ? "" : "s"}${scope}`

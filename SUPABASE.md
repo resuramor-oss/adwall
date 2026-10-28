@@ -84,8 +84,22 @@ Everything is done in the dashboard, no code:
   the site immediately (the view filters it) but stays in the database.
 - **Delete an ad:** same screen → delete the row. The photo stays in Storage;
   remove it under Storage → `ad-photos` if you care about the space.
-- **Delete all the seed ads:** `delete from public.ads where owner_token =
-  '00000000-0000-4000-8000-000000000000';`
+- **Clear the starter ads:** if the wall only contains the 12 samples, run
+  `delete from public.ads;`. To keep real posts, target the samples by seller:
+
+  ```sql
+  delete from public.ads
+  where seller in (
+    'Mia''s Bakes', 'Kuya J''s Prints', 'Thrift Finds', 'Notes & Niche',
+    'Sari-Sari Corner', 'Bead & Bloom', 'Lens by Ren', 'Study Hub',
+    'Milk Tea Club', 'Inkwell Stickers', 'The Plant Shelf', 'Pixel Prints'
+  );
+  ```
+
+  Rows created by `supabase/seed.sql` instead use the token
+  `00000000-0000-4000-8000-000000000000`, so
+  `delete from public.ads where owner_token = '00000000-0000-4000-8000-000000000000';`
+  also works for those.
 - **Lift the per-device rate limit:** edit the `recent >= 5` line in `create_ad`.
 
 ## What the free tier means here
