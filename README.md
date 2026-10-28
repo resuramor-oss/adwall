@@ -62,4 +62,11 @@ look populated and posting works end to end on one device.
 
 ## Deploying for free
 
-Full comparison and step-by-step instructions: [`../HOSTING.md`](../HOSTING.md).
+Live at <https://resuramor-oss.github.io/adwall/> — this folder is its own git repo.
+After editing:
+
+```bash
+git add . && git commit -m "update ads" && git push
+```
+
+Full comparison of free hosts and step-by-step alternatives: [`../HOSTING.md`](../HOSTING.md).
