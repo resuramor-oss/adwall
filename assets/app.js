@@ -14,7 +14,11 @@
   "use strict";
 
   const CFG = window.ADWALL_CONFIG || {};
-  const BASE = String(CFG.supabaseUrl || "").trim().replace(/\/+$/, "");
+  // Accept the bare project URL or a pasted REST endpoint (.../rest/v1/).
+  const BASE = String(CFG.supabaseUrl || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/rest\/v1$/i, "");
   const KEY = String(CFG.supabaseKey || "").trim();
   const TABLE = CFG.table || "ads_public";
   const BUCKET = CFG.storageBucket || "ad-photos";

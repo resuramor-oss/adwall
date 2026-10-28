@@ -9,7 +9,7 @@
  *    supabaseKey  = the "anon / public" key (NOT the service_role key)
  */
 window.ADWALL_CONFIG = {
-  supabaseUrl: "",
+  supabaseUrl: "https://lqpoqwdmfhanlhztwcvj.supabase.co",
   supabaseKey: "",
   table: "ads_public",
   storageBucket: "ad-photos"
