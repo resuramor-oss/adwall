@@ -10,7 +10,7 @@
  */
 window.ADWALL_CONFIG = {
   supabaseUrl: "https://lqpoqwdmfhanlhztwcvj.supabase.co",
-  supabaseKey: "",
+  supabaseKey: "sb_publishable_YuSEbCXG5b3awd4xXtAG3g_STwbNSe4",
   table: "ads_public",
   storageBucket: "ad-photos"
 };

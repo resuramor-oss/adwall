@@ -163,10 +163,19 @@
       const posts = readJSON(LS.posts, []);
       posts.unshift(ad);
       writeJSON(LS.posts, Array.isArray(posts) ? posts : [ad]);
-      return ad;
+      return { ad, warning: null };
     }
 
-    const photoUrl = photoBlob ? await uploadPhoto(photoBlob) : input.photo || "";
+    let photoUrl = input.photo || "";
+    let warning = null;
+    if (photoBlob) {
+      try {
+        photoUrl = await uploadPhoto(photoBlob);
+      } catch {
+        warning = "Posted, but the photo could not be uploaded — try it again later.";
+      }
+    }
+
     const row = await api("/rest/v1/rpc/create_ad", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -188,7 +197,7 @@
     const ad = fromRow(Array.isArray(row) ? row[0] : row);
     ad.mine = true;
     addMyId(ad.id);
-    return ad;
+    return { ad, warning };
   }
 
   async function deleteAd(id) {
@@ -710,7 +719,7 @@
         }
       }
 
-      const ad = await createAd(input, blob);
+      const { ad, warning } = await createAd(input, blob);
 
       form.reset();
       $("#desc-count").textContent = "0";
@@ -725,7 +734,7 @@
 
       state.ads = [ad].concat(state.ads.filter((other) => other.id !== ad.id));
       render();
-      toast(SHARED ? "Your ad is live on the wall" : "Your ad is on the wall");
+      toast(warning || (SHARED ? "Your ad is live on the wall" : "Your ad is on the wall"));
       openAd(ad.id);
 
       if (SHARED) refresh({ silent: true });
