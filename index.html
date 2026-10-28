@@ -75,6 +75,8 @@
         <button class="chip" type="button" data-cat="Services">Services</button>
       </div>
 
+      <div class="notice" id="notice" role="alert" hidden></div>
+
       <div class="toolbar">
         <p class="result-count" id="result-count" aria-live="polite"></p>
         <label class="sort">
@@ -145,9 +147,8 @@
         <p>A free advertising wall for student and local businesses.</p>
       </div>
     </div>
-    <p class="foot-note">
-      Student project build. Ads you post are saved in this browser only —
-      no accounts, no tracking, no fees.
+    <p class="foot-note" id="storage-note">
+      Student project build — no accounts, no tracking, no fees.
     </p>
   </div>
 </footer>
@@ -214,7 +215,7 @@
           <input id="f-photo" name="photo" type="url" placeholder="https://…" />
           <label class="upload">
             <input id="f-file" type="file" accept="image/*" hidden />
-            Choose file
+            <span id="file-label">Choose file</span>
           </label>
         </div>
       </div>
@@ -236,6 +237,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
+<script src="assets/config.js"></script>
 <script src="assets/ads.js"></script>
 <script src="assets/app.js"></script>
 </body>

@@ -1,14 +1,31 @@
 /* AdWall — front-end logic
-   Ads live in two places:
-     1. the seed list in assets/ads.js
-     2. posts this browser has made (localStorage)
-   There is no server, so nothing is shared between devices. */
+ *
+ * Two modes, chosen automatically from assets/config.js:
+ *
+ *   shared  Supabase is configured. Ads live in Postgres, photos in Storage, and
+ *           everyone sees the same wall. Reads go through the ads_public view;
+ *           writes go through the create_ad / delete_ad functions.
+ *
+ *   local   No credentials. Ads are stored in this browser only, seeded with the
+ *           demo list in assets/ads.js. Handy for showing the wall offline.
+ */
 
 (() => {
   "use strict";
 
-  const POSTS_KEY = "adwall.posts.v1";
-  const SAVED_KEY = "adwall.saved.v1";
+  const CFG = window.ADWALL_CONFIG || {};
+  const BASE = String(CFG.supabaseUrl || "").trim().replace(/\/+$/, "");
+  const KEY = String(CFG.supabaseKey || "").trim();
+  const TABLE = CFG.table || "ads_public";
+  const BUCKET = CFG.storageBucket || "ad-photos";
+  const SHARED = /^https?:\/\//i.test(BASE) && KEY.length > 20;
+
+  const LS = {
+    posts: "adwall.posts.v1",
+    saved: "adwall.saved.v1",
+    owner: "adwall.owner.v1",
+    mine: "adwall.myids.v1"
+  };
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -24,9 +41,12 @@
   const form = $("#post-form");
   const formError = $("#form-error");
   const toastEl = $("#toast");
+  const noticeEl = $("#notice");
+  const storageNote = $("#storage-note");
 
-  const state = { q: "", cat: "all", sort: "newest" };
+  const state = { q: "", cat: "all", sort: "newest", ads: [], loading: true, error: null };
   let saved = loadSaved();
+  let lastFetch = 0;
 
   /* ---------------------------------------------------------------- storage */
 
@@ -43,26 +63,43 @@
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch {
+      if (SHARED) return; // not fatal: the wall itself is on the server
       toast("This browser is blocking storage, so your post won't be saved.");
     }
   }
 
-  function loadPosts() {
-    const posts = readJSON(POSTS_KEY, []);
-    return Array.isArray(posts) ? posts : [];
-  }
-
-  function savePosts(posts) {
-    writeJSON(POSTS_KEY, posts);
-  }
-
   function loadSaved() {
-    const ids = readJSON(SAVED_KEY, []);
+    const ids = readJSON(LS.saved, []);
     return new Set(Array.isArray(ids) ? ids : []);
   }
 
   function persistSaved() {
-    writeJSON(SAVED_KEY, Array.from(saved));
+    writeJSON(LS.saved, Array.from(saved));
+  }
+
+  function ownerToken() {
+    let token = localStorage.getItem(LS.owner);
+    if (token && /^[0-9a-f-]{36}$/i.test(token)) return token;
+    token = crypto.randomUUID();
+    try { localStorage.setItem(LS.owner, token); } catch { /* private mode */ }
+    return token;
+  }
+
+  function myIds() {
+    const ids = readJSON(LS.mine, []);
+    return new Set(Array.isArray(ids) ? ids : []);
+  }
+
+  function addMyId(id) {
+    const ids = myIds();
+    ids.add(id);
+    writeJSON(LS.mine, Array.from(ids));
+  }
+
+  function removeMyId(id) {
+    const ids = myIds();
+    ids.delete(id);
+    writeJSON(LS.mine, Array.from(ids));
   }
 
   /* ------------------------------------------------------------------- data */
@@ -75,19 +112,135 @@
     Services: { emoji: "🛠️", gradient: "linear-gradient(150deg,#dbe7f5,#b9cfe8)" }
   };
 
-  function allAds() {
+  function localAds() {
     const now = Date.now();
     const seeds = (window.SEED_ADS || []).map((ad) => ({
       ...ad,
       createdAt: now - (ad.ageHours || 0) * 36e5,
       mine: false
     }));
-    const mine = loadPosts().map((ad) => ({ ...ad, mine: true }));
-    return mine.concat(seeds);
+    const mine = readJSON(LS.posts, []);
+    return (Array.isArray(mine) ? mine.map((ad) => ({ ...ad, mine: true })) : []).concat(seeds);
   }
 
-  function findAd(id) {
-    return allAds().find((ad) => ad.id === id) || null;
+  function fromRow(row) {
+    return {
+      id: row.id,
+      title: row.title,
+      seller: row.seller,
+      category: row.category,
+      price: Number(row.price),
+      unit: row.unit || "",
+      description: row.description,
+      contact: row.contact,
+      photo: row.photo_url || "",
+      emoji: row.emoji || "",
+      gradient: row.gradient || "",
+      createdAt: Date.parse(row.created_at) || Date.now(),
+      mine: myIds().has(row.id)
+    };
+  }
+
+  async function listAds() {
+    if (!SHARED) return localAds();
+    const rows = await api(`/rest/v1/${TABLE}?select=*&order=created_at.desc&limit=200`);
+    return (Array.isArray(rows) ? rows : []).map(fromRow);
+  }
+
+  async function createAd(input, photoBlob) {
+    if (!SHARED) {
+      const ad = {
+        ...input,
+        id: `post-${Date.now()}`,
+        photo: photoBlob ? await blobToDataUrl(photoBlob) : input.photo || "",
+        createdAt: Date.now(),
+        mine: true
+      };
+      const posts = readJSON(LS.posts, []);
+      posts.unshift(ad);
+      writeJSON(LS.posts, Array.isArray(posts) ? posts : [ad]);
+      return ad;
+    }
+
+    const photoUrl = photoBlob ? await uploadPhoto(photoBlob) : input.photo || "";
+    const row = await api("/rest/v1/rpc/create_ad", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        p_title: input.title,
+        p_seller: input.seller,
+        p_category: input.category,
+        p_price: input.price,
+        p_unit: input.unit || "",
+        p_description: input.description,
+        p_contact: input.contact,
+        p_photo_url: photoUrl || null,
+        p_emoji: input.emoji,
+        p_gradient: input.gradient,
+        p_token: ownerToken()
+      })
+    });
+
+    const ad = fromRow(Array.isArray(row) ? row[0] : row);
+    ad.mine = true;
+    addMyId(ad.id);
+    return ad;
+  }
+
+  async function deleteAd(id) {
+    if (!SHARED) {
+      const posts = readJSON(LS.posts, []);
+      writeJSON(LS.posts, posts.filter((post) => post.id !== id));
+      return;
+    }
+    const ok = await api("/rest/v1/rpc/delete_ad", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ p_id: id, p_token: ownerToken() })
+    });
+    if (ok !== true) throw new Error("That ad was posted from another device, so it can't be deleted here.");
+    removeMyId(id);
+  }
+
+  /* --------------------------------------------------------- supabase REST */
+
+  function api(path, options = {}) {
+    return fetch(BASE + path, {
+      ...options,
+      headers: {
+        apikey: KEY,
+        Authorization: `Bearer ${KEY}`,
+        ...(options.headers || {})
+      }
+    }).then(async (res) => {
+      if (!res.ok) {
+        let message = `Request failed (${res.status})`;
+        try {
+          const body = await res.json();
+          message = body.message || body.error_description || body.hint || message;
+        } catch { /* not JSON */ }
+        throw new Error(message);
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    });
+  }
+
+  async function uploadPhoto(blob) {
+    const path = `${crypto.randomUUID()}.jpg`;
+    const res = await fetch(`${BASE}/storage/v1/object/${BUCKET}/${path}`, {
+      method: "POST",
+      headers: {
+        apikey: KEY,
+        Authorization: `Bearer ${KEY}`,
+        "Content-Type": "image/jpeg",
+        "x-upsert": "false"
+      },
+      body: blob
+    });
+    if (!res.ok) throw new Error("The photo could not be uploaded. Try posting without it.");
+    return `${BASE}/storage/v1/object/public/${BUCKET}/${path}`;
   }
 
   /* ----------------------------------------------------------------- helpers */
@@ -252,28 +405,92 @@
     else saved.add(id);
     persistSaved();
     render();
-    const ad = findAd(id);
-    toast(saved.has(id) ? `Saved “${ad?.title ?? "ad"}”` : "Removed from saved");
+  }
+
+  function skeleton() {
+    return el("div", { class: "card skeleton", "aria-hidden": "true" }, [
+      el("div", { class: "skeleton-media" }),
+      el("div", { class: "skeleton-body" }, [
+        el("span", { class: "skeleton-line w70" }),
+        el("span", { class: "skeleton-line w45" }),
+        el("span", { class: "skeleton-line w55" })
+      ])
+    ]);
+  }
+
+  function setNotice(message, kind = "error", retry = false) {
+    if (!message) {
+      noticeEl.hidden = true;
+      noticeEl.replaceChildren();
+      return;
+    }
+    noticeEl.hidden = false;
+    noticeEl.className = `notice notice-${kind}`;
+    const text = el("span", { text: message });
+    const children = [text];
+    if (retry) {
+      const button = el("button", { class: "btn btn-ghost btn-sm", type: "button", text: "Try again" });
+      button.addEventListener("click", refresh);
+      children.push(button);
+    }
+    noticeEl.replaceChildren(...children);
   }
 
   function render() {
-    const ads = allAds().filter(matches).sort(compare);
+    const ads = state.ads.filter(matches).sort(compare);
+
+    if (state.loading) {
+      grid.replaceChildren(...Array.from({ length: 8 }, skeleton));
+      empty.hidden = true;
+      countEl.textContent = "Loading the wall…";
+      return;
+    }
 
     grid.replaceChildren(...ads.map(card));
-    empty.hidden = ads.length > 0;
+    empty.hidden = ads.length > 0 || Boolean(state.error);
 
     const scope = state.cat === "all" ? "" : ` in ${state.cat.toLowerCase()}`;
     countEl.innerHTML = ads.length
       ? `<strong>${ads.length}</strong> ad${ads.length === 1 ? "" : "s"}${scope}`
       : `No ads${scope}`;
 
-    const everything = allAds();
-    $("#stat-ads").textContent = everything.length;
-    $("#stat-sellers").textContent = new Set(everything.map((ad) => ad.seller)).size;
-    $("#stat-cats").textContent = new Set(everything.map((ad) => ad.category)).size;
+    $("#stat-ads").textContent = state.ads.length;
+    $("#stat-sellers").textContent = new Set(state.ads.map((ad) => ad.seller)).size;
+    $("#stat-cats").textContent = new Set(state.ads.map((ad) => ad.category)).size;
+  }
+
+  async function refresh({ silent = false } = {}) {
+    if (!silent) {
+      state.loading = true;
+      setNotice("");
+      render();
+    }
+    state.error = null;
+    try {
+      state.ads = await listAds();
+      lastFetch = Date.now();
+      setNotice("");
+    } catch (error) {
+      state.error = error;
+      setNotice(
+        SHARED
+          ? `Could not reach the wall: ${error.message}`
+          : "Could not load the demo ads.",
+        "error",
+        true
+      );
+      if (!state.ads.length) state.ads = [];
+    } finally {
+      state.loading = false;
+      render();
+    }
   }
 
   /* -------------------------------------------------------------- ad dialog */
+
+  function findAd(id) {
+    return state.ads.find((ad) => ad.id === id) || null;
+  }
 
   function openAd(id) {
     const ad = findAd(id);
@@ -289,7 +506,7 @@
 
     const pills = el("div", { class: "ad-meta" }, [
       el("span", { class: "pill", text: ad.category }),
-      el("span", { class: "pill pill-teal", text: "Free to post" }),
+      el("span", { class: "pill pill-teal", text: SHARED ? "Live on the wall" : "Free to post" }),
       ad.mine ? el("span", { class: "pill", text: "Your ad" }) : null
     ]);
 
@@ -326,14 +543,22 @@
 
     if (ad.mine) {
       const del = el("button", { class: "btn btn-ghost", type: "button", text: "Delete my ad" });
-      del.addEventListener("click", () => {
+      del.addEventListener("click", async () => {
         if (!confirm(`Delete “${ad.title}”? This cannot be undone.`)) return;
-        savePosts(loadPosts().filter((post) => post.id !== ad.id));
-        saved.delete(ad.id);
-        persistSaved();
-        adDialog.close();
-        render();
-        toast("Ad deleted");
+        del.disabled = true;
+        del.textContent = "Deleting…";
+        try {
+          await deleteAd(ad.id);
+          saved.delete(ad.id);
+          persistSaved();
+          adDialog.close();
+          await refresh({ silent: true });
+          toast("Ad deleted");
+        } catch (error) {
+          del.disabled = false;
+          del.textContent = "Delete my ad";
+          toast(error.message);
+        }
       });
       actions.push(del);
     }
@@ -355,9 +580,11 @@
       el("div", { class: "ad-actions" }, actions),
       el("p", {
         class: "ad-note",
-        text: ad.mine
-          ? "This ad is stored in this browser only — it disappears if you clear site data."
-          : "AdWall does not handle payments or delivery. Meet in a public place on campus."
+        text: SHARED
+          ? (ad.mine
+            ? "You can delete this ad from this browser. Anyone with the link can see it."
+            : "AdWall does not handle payments or delivery. Meet in a public place on campus.")
+          : "Demo mode: this ad is stored in this browser only. Add Supabase keys to share it."
       })
     );
 
@@ -396,7 +623,8 @@
     formError.textContent = "";
   }
 
-  async function fileToDataUrl(file) {
+  /* Shrink the picture in the browser so uploads stay small and fast. */
+  async function compressPhoto(file) {
     const bitmap = await createImageBitmap(file);
     const max = 900;
     const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
@@ -405,7 +633,22 @@
     canvas.height = Math.round(bitmap.height * scale);
     canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close?.();
-    return canvas.toDataURL("image/jpeg", 0.82);
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Could not read that photo."))),
+        "image/jpeg",
+        0.82
+      );
+    });
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("Could not read that photo."));
+      reader.readAsDataURL(blob);
+    });
   }
 
   form.addEventListener("submit", async (event) => {
@@ -428,21 +671,14 @@
     if (description.length < 12) return showError("Write a short description (at least 12 characters).");
     if (!contact) return showError("Add a way for buyers to reach you.");
 
-    let photo = safeImage(photoUrl);
     const fileInput = $("#f-file");
     const file = fileInput?.files?.[0];
-    if (file) {
-      if (file.size > 8 * 1024 * 1024) return showError("That photo is too large — pick one under 8 MB.");
-      try {
-        photo = await fileToDataUrl(file);
-      } catch {
-        return showError("That photo could not be read. Try a different file.");
-      }
+    if (file && file.size > 8 * 1024 * 1024) {
+      return showError("That photo is too large — pick one under 8 MB.");
     }
 
     const style = CATEGORY_STYLE[category] || CATEGORY_STYLE.Services;
-    const ad = {
-      id: `post-${Date.now()}`,
+    const input = {
       title,
       seller,
       category,
@@ -450,30 +686,51 @@
       unit,
       description,
       contact,
-      photo,
+      photo: safeImage(photoUrl),
       emoji: CATEGORY_EMOJI[category] || "🛍️",
-      gradient: style.gradient,
-      createdAt: Date.now(),
-      mine: true
+      gradient: style.gradient
     };
 
-    const posts = loadPosts();
-    posts.unshift(ad);
-    savePosts(posts);
+    const submit = form.querySelector("button[type=submit]");
+    const label = submit.textContent;
+    submit.disabled = true;
+    submit.textContent = "Posting…";
 
-    form.reset();
-    $("#desc-count").textContent = "0";
-    const uploadLabel = $(".upload");
-    if (uploadLabel) uploadLabel.textContent = "Choose file";
-    postDialog.close();
+    try {
+      let blob = null;
+      if (file) {
+        try {
+          blob = await compressPhoto(file);
+        } catch {
+          throw new Error("That photo could not be read. Try a different file.");
+        }
+      }
 
-    state.cat = "all";
-    $$(".chip").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.cat === "all"));
-    state.sort = "newest";
-    sortEl.value = "newest";
-    render();
-    toast("Your ad is on the wall");
-    openAd(ad.id);
+      const ad = await createAd(input, blob);
+
+      form.reset();
+      $("#desc-count").textContent = "0";
+      const uploadLabel = $("#file-label");
+      if (uploadLabel) uploadLabel.textContent = "Choose file";
+      postDialog.close();
+
+      state.cat = "all";
+      $$(".chip").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.cat === "all"));
+      state.sort = "newest";
+      sortEl.value = "newest";
+
+      state.ads = [ad].concat(state.ads.filter((other) => other.id !== ad.id));
+      render();
+      toast(SHARED ? "Your ad is live on the wall" : "Your ad is on the wall");
+      openAd(ad.id);
+
+      if (SHARED) refresh({ silent: true });
+    } catch (error) {
+      showError(error.message || "Something went wrong. Please try again.");
+    } finally {
+      submit.disabled = false;
+      submit.textContent = label;
+    }
   });
 
   /* ------------------------------------------------------------- interactions */
@@ -522,14 +779,36 @@
 
   $("#f-file").addEventListener("change", (event) => {
     const file = event.target.files?.[0];
-    const label = $(".upload");
+    const label = $("#file-label");
     if (label) label.textContent = file ? file.name.slice(0, 18) : "Choose file";
   });
 
+  /* Keep the wall fresh without websockets: refresh when the tab regains focus,
+     and at most once a minute while it stays open. */
+  if (SHARED) {
+    const maybeRefresh = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastFetch > 30000) {
+        refresh({ silent: true });
+      }
+    };
+    window.addEventListener("focus", maybeRefresh);
+    document.addEventListener("visibilitychange", maybeRefresh);
+    setInterval(() => {
+      if (document.visibilityState === "visible") refresh({ silent: true });
+    }, 60000);
+  }
+
   /* -------------------------------------------------------------------- boot */
 
-  render();
+  if (storageNote) {
+    storageNote.textContent = SHARED
+      ? "Shared wall: ads you post are live for everyone, with no accounts, no tracking, and no fees."
+      : "Demo mode: ads you post are saved in this browser only. Add Supabase keys (site/SUPABASE.md) to share them.";
+  }
 
-  const linked = new URLSearchParams(location.search).get("ad");
-  if (linked && findAd(linked)) openAd(linked);
+  render();
+  refresh().then(() => {
+    const linked = new URLSearchParams(location.search).get("ad");
+    if (linked) openAd(linked);
+  });
 })();

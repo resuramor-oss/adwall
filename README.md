@@ -3,24 +3,28 @@
 The public site: a free advertising wall where student sellers and small local
 businesses post ads and buyers browse them in one place.
 
-Plain HTML, CSS, and JavaScript. **No build step, no dependencies, no backend.**
-That is deliberate — it runs on any static host, including the free ones.
+Plain HTML, CSS, and JavaScript. **No build step, no dependencies.** The data layer
+is either the visitor's browser (demo mode) or Supabase (shared wall) — see
+[`SUPABASE.md`](SUPABASE.md).
 
 ```
 site/
-├── index.html            # the wall
-├── 404.html              # fallback page (used by GitHub Pages / Netlify)
+├── index.html              # the wall
+├── 404.html                # fallback page (used by GitHub Pages / Netlify)
 ├── assets/
-│   ├── styles.css        # all styling
-│   ├── app.js            # filtering, dialogs, posting, storage
-│   ├── ads.js            # the seed ads that show up by default
+│   ├── styles.css          # all styling
+│   ├── app.js              # filtering, dialogs, posting, data layer
+│   ├── config.js           # Supabase URL + anon key (empty = demo mode)
+│   ├── ads.js              # demo ads used when Supabase is not configured
 │   └── favicon.svg
+├── supabase/
+│   ├── schema.sql          # tables, view, functions, storage bucket
+│   └── seed.sql            # optional starter ads
+├── SUPABASE.md             # 5-minute setup for the shared wall
 └── README.md
 ```
 
 ## Run it locally
-
-From the folder above `site/`:
 
 ```bash
 cd site
@@ -32,33 +36,37 @@ Then open <http://localhost:8000>.
 Opening `index.html` directly with `file://` mostly works too, but serving it is
 closer to how it behaves online.
 
-## Editing the ads
+## Two modes
 
-- **Seed ads** (the 12 that ship with the site) live in `assets/ads.js`. Copy a
-  block, change the fields, done. `ageHours` only controls the "posted X ago" label.
-- **Ads posted on the site** are saved in that browser's `localStorage` under
-  `adwall.posts.v1`. They never leave the device.
+The site decides which mode it is in from `assets/config.js`:
 
-## How it works right now
+| | Demo mode (no keys) | Shared mode (keys filled in) |
+|---|---|---|
+| Ads seen by visitors | The 12 in `assets/ads.js` + their own posts | Everything in the database |
+| Where a new ad goes | `localStorage` on that device | Postgres, visible to everyone |
+| Photos | Compressed and stored as data URLs locally | Uploaded to the `ad-photos` bucket |
+| "Yours" badge and delete | Per browser | Per browser, enforced by a device token in the database |
+| Offline / no connection | Works | Shows a "could not reach the wall" banner with Retry |
+
+The footer tells you which mode is live, so there is no guessing.
+
+## Editing the demo ads
+
+`assets/ads.js` only matters in demo mode. Copy a block, change the fields, done.
+`ageHours` only controls the "posted X ago" label. In shared mode the equivalent
+job is done by `supabase/seed.sql`.
+
+## Features
 
 | Feature | Status |
 |---|---|
 | Browse, search, filter by category, sort by price/date | Works |
-| Post an ad with photo, price, description, contact | Works (saved in the browser) |
+| Post an ad with photo, price, description, contact | Works |
 | Save ads, share links, deep link `?ad=<id>` | Works |
-| Ads visible to other people/devices | Not yet — needs a backend (see below) |
-
-The "not yet" line is the honest limitation of a static site: there is nowhere to
-store a shared list of ads. Two ways out, both free:
-
-1. **Supabase free tier** — Postgres + REST API + image storage. Replace the
-   `loadPosts`/`savePosts` functions in `assets/app.js` with fetch calls. This is
-   the smallest change that makes the wall genuinely shared.
-2. **Google Sheet + Apps Script** — one script publishes a JSON endpoint that the
-   site reads, and the post form appends rows. Zero cost, but slower and no images.
-
-For a class demo, the current build is usually enough — the seed ads make the wall
-look populated and posting works end to end on one device.
+| Ads visible to other people/devices | With Supabase configured |
+| Delete your own ad | Works; server-side check stops others |
+| Rate limiting | 5 posts per device per 10 minutes |
+| Automatic refresh | On tab focus, and once a minute |
 
 ## Deploying for free
 
